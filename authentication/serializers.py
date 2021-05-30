@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import User
-from django.contrib import auth
+from django.contrib.auth import authenticate
 from rest_framework.exceptions import AuthenticationFailed
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.utils.encoding import smart_str, force_str, smart_bytes, DjangoUnicodeDecodeError
@@ -41,7 +41,15 @@ class LoginSerializer(serializers.ModelSerializer):
         max_length=68, min_length=6, write_only=True)
     username = serializers.CharField(
         max_length=255, min_length=6, read_only=True)
-    tokens = serializers.CharField(max_length=68, min_length=6, read_only=True)
+    tokens = serializers.SerializerMethodField()
+
+    def get_tokens(self, obj):
+        user = User.objects.get(email=obj['email'])
+
+        return {
+            'access': user.get_tokens_for_user()['access'],
+            'refresh': user.get_tokens_for_user()['refresh']
+        }
 
     class Meta:
         model = User
@@ -50,7 +58,12 @@ class LoginSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         email = attrs.get('email', '')
         password = attrs.get('password', '')
-        user = auth.authenticate(email=email, password=password)
+        filtered_user_by_email = User.objects.filter(email=email)
+        user = authenticate(email=email, password=password)
+
+        if filtered_user_by_email.exists() and filtered_user_by_email[0].auth_provider != 'email':
+            raise AuthenticationFailed(
+                detail='Please continue your login using ' + filtered_user_by_email[0].auth_provider)
 
         if not user:
             raise AuthenticationFailed("Invalid credentials, please try again")
@@ -65,7 +78,7 @@ class LoginSerializer(serializers.ModelSerializer):
         return {
             'email': user.email,
             'username': user.username,
-            'tokens': user.get_tokens
+            'tokens': user.get_tokens_for_user
         }
 
         return super().validate(attrs)
